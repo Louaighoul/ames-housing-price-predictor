@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local git scratch
+work/repo.git/
+
+# Kaggle data should be downloaded locally, not committed
+data/raw/*
+!data/raw/.gitkeep
+
+# Generated artifacts
+models/*
+!models/.gitkeep
+outputs/*
+!outputs/.gitkeep
+reports/metrics/*
+!reports/metrics/.gitkeep
+reports/figures/*
+!reports/figures/.gitkeep
+
