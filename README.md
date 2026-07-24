@@ -1,239 +1,82 @@
-# Ames Housing Price Prediction
+Ames Housing Price Prediction
+A modular, production-style machine learning pipeline for the Ames Housing dataset. Built to move beyond exploratory notebooks into clean, structured Python code featuring domain-aware preprocessing, leak-safe cross-validation, CPU-optimized gradient boosting, and real-time inference via Streamlit.
 
-Production-style end-to-end machine learning project for the Kaggle Ames Housing dataset.
+├── data/
+│   └── raw/               # train.csv, test.csv, sample_submission.csv
+├── models/
+│   └── best_model.pkl     # Serialized pipeline + model artifact
+├── reports/
+│   └── metrics/           # metrics.json, cv_results.csv
+├── src/
+│   ├── config.py          # Paths, features, and grid search hyperparams
+│   ├── data_preprocessing.py # Pipeline transformers & feature engineering
+│   ├── logging_utils.py   # Standard logging setup
+│   ├── model_utils.py     # Training loops, CV, & metrics calculation
+│   ├── predict.py         # Batch and single-row inference helpers
+│   └── train.py           # CLI entrypoint for training & serialization
+├── app.py                 # Streamlit web UI for live predictions
+└── requirements.txt
+Technical Highlights & Design Choices
+1. Domain-Aware Missing Value Handling
+Standard SimpleImputer(strategy='mean') distorts real estate datasets because missing values in structural attributes indicate absence, not missing data.
 
-This repository is intentionally structured like a real-world ML product instead of a single notebook. It includes domain-aware preprocessing, leak-safe model training, CPU-friendly cross-validation, model serialization, and a lightweight Streamlit demo for inference.
+Explicit Negation (None / 0): Categorical features like GarageType, BsmtQual, FireplaceQu, and PoolQC use 'None' because missing values mean the property lacks that amenity. Corresponding area/count features use 0.
 
-## STAR Summary
+Stratified Medians: LotFrontage uses median imputation based on neighborhood groupings.
 
-### Situation
-Real estate pricing is a classic tabular ML problem with messy missing values, mixed feature types, and correlated variables. The Ames dataset is especially useful for interviews because it contains both obvious features and subtle domain-specific missingness.
+True Missingness: Mode imputation is reserved strictly for low-count data quality gaps (Electrical, MSZoning).
 
-### Task
-Build a professional, modular Python repository that:
+Absence Indicators: Added binary flags (HasGarage, HasBasement, HasPool, HasFireplace) so tree-based models can split directly on feature presence.
 
-- handles Ames-specific missing data correctly
-- reduces multicollinearity through feature engineering
-- trains strong CPU-friendly models
-- serializes a reusable model artifact
-- exposes predictions through a simple web interface
+2. Feature Engineering & Multicollinearity
+Raw housing attributes exhibit heavy collinearity (GrLivArea vs TotRmsAbvGrd, floor square footage). The following aggregations streamline these signals:
 
-### Action
-I designed a clean pipeline with:
+Aggregated Totals: Built TotalSF (Basement + 1st/2nd floor), TotalBath (Full + 0.5*Half across main level and basement), and TotalPorchSF.
 
-- domain-aware imputations
-- rare-category consolidation
-- feature engineering for total area, age, and quality signals
-- log-target training for sale price stability
-- cross-validated grid search over XGBoost and LightGBM
-- Streamlit-based inference UI
+Temporal Dynamics: Derived HouseAge, RemodelAge, and YearsSinceRemodel relative to YrSold.
 
-### Result
-The repository is now organized for portfolio use, technical interviews, and iterative model improvement. It demonstrates end-to-end ML engineering rather than only model fitting.
+Spatial Ratios: Added LivingAreaToLotRatio and GarageAreaPerCar.
 
-## Repository Structure
+Type Normalization: Cast MSSubClass to string categorical (it represents dwelling type codes, not continuous values).
 
-```text
-src/
-├─ __init__.py
-├─ config.py
-├─ data_preprocessing.py
-├─ logging_utils.py
-├─ model_utils.py
-├─ predict.py
-└─ train.py
-app.py
-requirements.txt
-README.md
-data/raw/
-├─ train.csv
-├─ test.csv
-└─ sample_submission.csv
-models/
-└─ best_model.pkl
-reports/metrics/
-└─ metrics.json
-```
+3. Leak-Safe Pipeline & Categorical Encoding
+Rare Category Grouping: Sparse categorical levels (e.g., rare Exterior1st materials) are grouped into an 'Other' bucket to prevent high-dimensional expansion and overfitting.
 
-## Data Pain Points and Techniques Used
+Strict Cross-Validation Bounds: All encoders, scalers, and custom transformers are encapsulated in Scikit-learn Pipelines and fitted strictly on training folds inside cross-validation.
 
-### 1. Heavy Missing Data
-The Ames dataset has many missing values, but they are not all the same kind of missingness.
+4. Training & Target Optimization
+Log-Transformed Target: Models target log(1+SalePrice) to mitigate right-skewness and match RMSLE evaluation metrics.
 
-I handled them with distinct strategies:
+Model Selection: Compares XGBoost and LightGBM using 5-fold cross-validation (KFold).
 
-- `None` imputation for features where missing means the feature does not exist
-  - examples: `GarageType`, `BsmtQual`, `FireplaceQu`, `PoolQC`, `Fence`
-- median imputation for numeric features with genuine gaps
-  - examples: `LotFrontage`, `GarageYrBlt`, remaining numeric columns
-- mode imputation for true data-quality missingness in categorical columns
-  - examples: `Electrical`, `MSZoning`, `Exterior1st`, `KitchenQual`
-- zero fill for area/count columns when absence is meaningful
-  - examples: `GarageArea`, `TotalBsmtSF`, `BsmtFullBath`, `PoolArea`
+CPU Optimization: Hyperparameter search grids use histogram-based tree algorithms (tree_method='hist' / boosting_type='gbdt') to maintain CV runtimes under 2 minutes on standard quad-core CPUs.
 
-I also added binary missingness flags such as:
-
-- `HasGarage`
-- `HasBasement`
-- `HasFireplace`
-- `HasPool`
-
-These flags let the model learn from the absence itself.
-
-### 2. High Dimensionality and Multicollinearity
-The raw dataset has many correlated variables.
-
-To reduce redundancy, I engineered aggregate features:
-
-- `HouseAge`
-- `RemodelAge`
-- `YearsSinceRemodel`
-- `TotalSF`
-- `TotalBath`
-- `TotalPorchSF`
-- `QualityConditionScore`
-- `QualityGap`
-- `GarageAreaPerCar`
-- `LivingAreaToLotRatio`
-
-I also cast `MSSubClass` to string because it is an encoded category, not a true numeric quantity.
-
-### 3. Advanced Categorical Encoding
-I used a rare-category strategy to collapse sparse labels into a single bucket before one-hot encoding.
-
-Why this helps:
-
-- reduces dimensionality
-- improves stability on sparse categories
-- prevents the model from overfitting to one-off labels
-
-The encoding strategy is leak-safe because it is fit on training folds only inside the model pipeline.
-
-## Modeling Approach
-
-The training pipeline focuses on strong CPU-efficient tree-based models:
-
-- XGBoost
-- LightGBM
-
-The training objective uses `log1p(SalePrice)` so the target distribution is more stable and closer to what the Kaggle competition evaluates.
-
-Cross-validation details:
-
-- `KFold` with 5 splits
-- shuffle enabled
-- fixed random seed for reproducibility
-- `GridSearchCV` over compact parameter grids
-- scoring tracked on:
-  - RMSE
-  - MAE
-  - R2
-
-The best model is serialized as a `.pkl` artifact with `joblib`.
-
-## CPU Optimization Decisions
-
-This project is optimized for local laptop development:
-
-- tree models use histogram-based algorithms where available
-- preprocessing is handled with scikit-learn pipelines
-- one-hot encoding is sparse and memory-conscious
-- rare category grouping reduces feature explosion
-- the parameter grids are intentionally compact so CV remains practical on CPU
-
-## Core Modules
-
-### `src/data_preprocessing.py`
-Domain-aware preprocessing module with:
-
-- train/test loading
-- target splitting
-- domain-specific imputations
-- feature engineering
-- rare category handling
-- preprocessing artifacts for inference
-
-### `src/train.py`
-CLI training entrypoint that:
-
-- loads raw train/test CSV files
-- runs cross-validated grid search
-- compares XGBoost and LightGBM
-- saves metrics to JSON and CSV
-- serializes the best model bundle
-- optionally creates a Kaggle submission file
-
-### `src/predict.py`
-Simple inference helpers for loading the saved model bundle and predicting prices on raw feature rows.
-
-### `app.py`
-Streamlit interface that:
-
-- loads the trained `.pkl` model
-- presents a form for house features
-- returns a live price estimate
-
-## How to Run
-
-### 0. Download the Kaggle data
-
-Place `train.csv`, `test.csv`, and `sample_submission.csv` from the Kaggle archive into:
-
-```text
-data/raw/
-```
-
-### 1. Install dependencies
-
-```bash
+Quickstart
+1. Environment Setup
+Bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-```
+2. Place Raw Data
+Download the data from Kaggle and place train.csv and test.csv inside data/raw/.
 
-### 2. Train the model
+3. Run the Training Pipeline
+Execute the CLI to preprocess data, perform grid search cross-validation, save performance reports, serialize the best model bundle, and generate predictions:
 
-```bash
+Bash
 python -m src.train --train-csv data/raw/train.csv --test-csv data/raw/test.csv
-```
+Outputs generated:
 
-This will create:
+models/best_model.pkl — Complete pipeline artifact (transformers + estimator).
 
-- `models/best_model.pkl`
-- `reports/metrics/metrics.json`
-- `reports/metrics/cv_results.csv`
-- `outputs/submission.csv`
+reports/metrics/metrics.json — Out-of-fold RMSE, MAE, and R 
+2
+  performance metrics.
 
-### 3. Launch the Streamlit app
+outputs/submission.csv — Predictions formatted for Kaggle submission.
 
-```bash
+4. Launch Local Inference App
+Run the interactive Streamlit dashboard to test predictions against the serialized model artifact:
+
+Bash
 streamlit run app.py
-```
-
-## Artifacts Produced
-
-- `models/best_model.pkl`
-  - serialized pipeline + model bundle
-- `reports/metrics/metrics.json`
-  - summary of CV and diagnostic metrics
-- `reports/metrics/cv_results.csv`
-  - detailed grid search output
-- `outputs/submission.csv`
-  - Kaggle-ready prediction file for the test set
-
-## Notes for Interview Discussion
-
-If asked why this project is strong, emphasize:
-
-- domain-specific missingness handling instead of generic imputation
-- feature engineering that reflects housing economics
-- leak-safe pipeline design
-- CPU-aware model selection
-- production-style project structure
-- Streamlit inference experience
-
-## Future Improvements
-
-- add SHAP-based explainability
-- add model comparison with CatBoost
-- add experiment tracking with MLflow
-- add unit tests for preprocessing edge cases
-- containerize the app with Docker
